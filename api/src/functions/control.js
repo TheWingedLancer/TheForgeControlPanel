@@ -61,7 +61,20 @@ app.http('control', {
       };
     } catch (err) {
       context.error(`Forge call failed: ${err.message}`);
-      return jsonError(502, 'Upstream Forge request failed');
+      // DIAGNOSTIC: include error details in response. Remove after debugging.
+      return {
+        status: 502,
+        jsonBody: {
+          error: 'Upstream Forge request failed',
+          debug: {
+            message: err.message,
+            name: err.name,
+            cause: err.cause?.message || err.cause || null,
+            keyConfigured: !!process.env.FORGE_API_KEY,
+            keyLength: process.env.FORGE_API_KEY?.length || 0,
+          },
+        },
+      };
     }
   },
 });
