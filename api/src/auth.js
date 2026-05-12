@@ -82,8 +82,19 @@ export function getAuthorizedPrincipal(request) {
   const tokenTenant = findClaim(principal, TID_CLAIM_TYPES);
   if (!tokenTenant || tokenTenant.toLowerCase() !== requiredTenant.toLowerCase()) {
     // TEMPORARY DIAGNOSTIC — remove after debugging
-    console.log(`TENANT MISMATCH DEBUG: tokenTenant=${JSON.stringify(tokenTenant)} (len=${tokenTenant?.length}) requiredTenant=${JSON.stringify(requiredTenant)} (len=${requiredTenant.length})`);
-    return { ok: false, status: 403, error: 'User is not from an allowed tenant' };
+    return {
+      ok: false,
+      status: 403,
+      error: 'User is not from an allowed tenant',
+      debug: {
+        tokenTenant: tokenTenant,
+        tokenTenantLength: tokenTenant?.length,
+        requiredTenant: requiredTenant,
+        requiredTenantLength: requiredTenant.length,
+        claimsCount: Array.isArray(principal.claims) ? principal.claims.length : 'not-array',
+        firstFewClaimTypes: Array.isArray(principal.claims) ? principal.claims.slice(0, 5).map(c => c?.typ || c?.type) : null,
+      },
+    };
   }
 
   // Email allowlist. userDetails is populated from userDetailsClaim in the SWA

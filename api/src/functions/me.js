@@ -12,7 +12,10 @@ app.http('me', {
   handler: async (request, context) => {
     const auth = getAuthorizedPrincipal(request);
     if (!auth.ok) {
-      return jsonError(auth.status, auth.error);
+      // Surface debug info in the body if present (diagnostic only)
+      const body = { error: auth.error };
+      if (auth.debug) body.debug = auth.debug;
+      return { status: auth.status, jsonBody: body };
     }
     return jsonOk({
       email: auth.principal.userDetails,
