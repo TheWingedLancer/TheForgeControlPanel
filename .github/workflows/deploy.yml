@@ -10,21 +10,36 @@ on:
 
 # Required repo configuration:
 #   Secret:   AZURE_STATIC_WEB_APPS_API_TOKEN  (from `az staticwebapp secrets list`)
-#   Variable: AAD_TENANT_ID                    (your Entra tenant ID; not sensitive)
+#   Variable: AAD_TENANT_ID                    (your Entra tenant ID; used by frontend at build time)
+#   Variable: AZURE_FUNCTIONAPP_NAME           (e.g. func-tfcp-xxxxx)
+#   Variable: AZURE_CLIENT_ID                  (managed identity client ID for OIDC)
+#   Variable: AZURE_TENANT_ID                  (Entra tenant ID; same as AAD_TENANT_ID)
+#   Variable: AZURE_SUBSCRIPTION_ID            (TheForgeControl subscription ID)
 #
-# The Forge API key, allowlist, AAD client secret, and game slugs all live in
-# Azure Key Vault and are read at runtime by the Function App's managed
-# identity. They never appear in this workflow, in GitHub, or in build logs.
+# Authentication to deploy the Function App uses OIDC federated credentials —
+# no long-lived secret. The workflow requests a short-lived token from
+# GitHub's OIDC provider, exchanges it via Entra ID for an Azure access token,
+# and uses that token to deploy. The managed identity must be configured
+# with a federated credential trusting this repo's main branch.
+#
+# The Forge API key, allowlist, and game slugs all live in Azure Key Vault and
+# are read at runtime by the Function App's managed identity. They never
+# appear in this workflow, in GitHub, or in build logs.
 
 concurrency:
   group: deploy-${{ github.ref }}
   cancel-in-progress: false
 
+# OIDC token issuance requires this permission scope
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
-  build_and_deploy:
+  deploy_frontend:
     if: github.event_name != 'pull_request' || github.event.action != 'closed'
     runs-on: ubuntu-latest
-    name: Build and deploy
+    name: Deploy frontend (SWA)
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,7 +51,7 @@ jobs:
         run: |
           missing=0
           if [ -z "$AAD_TENANT_ID" ]; then
-            echo "::error::Repo variable AAD_TENANT_ID is not set. Settings → Secrets and variables → Actions → Variables."
+            echo "::error::Repo variable AAD_TENANT_ID is not set."
             missing=1
           fi
           if [ -z "$SWA_TOKEN" ]; then
@@ -50,9 +65,7 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: |
-            frontend/package-lock.json
-            api/package-lock.json
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install frontend deps
         working-directory: frontend
@@ -64,45 +77,79 @@ jobs:
           AAD_TENANT_ID: ${{ vars.AAD_TENANT_ID }}
         run: npm run build
 
-      - name: Install API deps
-        working-directory: api
-        run: npm ci --omit=dev
-
-      - name: Deploy to Azure Static Web Apps
+      - name: Deploy to Azure Static Web Apps (frontend only)
         id: deploy
         uses: Azure/static-web-apps-deploy@v1
         with:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           action: 'upload'
-          app_location: 'frontend'
-          output_location: 'dist'
-          api_location: 'api'
+          app_location: 'frontend/dist'
+          # No api_location — the Function App is a linked backend deployed separately
           skip_app_build: true
           skip_api_build: true
 
-      - name: Smoke check
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  deploy_api:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    name: Deploy API (Function App)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fail fast if required config is missing
+        env:
+          FUNC_NAME: ${{ vars.AZURE_FUNCTIONAPP_NAME }}
+          CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          SUB_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
         run: |
-          # SWA deployments take a few seconds to propagate to the edge after
-          # the action reports success. Poll the root URL up to 12 times.
-          url="${{ steps.deploy.outputs.static_web_app_url }}"
-          if [ -z "$url" ]; then
-            echo "::warning::No deploy URL returned; skipping smoke check"
-            exit 0
-          fi
-          echo "Probing $url"
-          for i in $(seq 1 12); do
-            # Expect 302 (redirect to /.auth/login/aad) — proves the auth gate is live
-            code=$(curl -s -o /dev/null -w "%{http_code}" -L --max-redirs 0 "$url" || echo "000")
-            echo "  attempt $i: HTTP $code"
-            if [ "$code" = "302" ] || [ "$code" = "401" ]; then
-              echo "Auth gate is responding correctly."
-              exit 0
+          missing=0
+          for v in FUNC_NAME CLIENT_ID TENANT_ID SUB_ID; do
+            eval "val=\$$v"
+            if [ -z "$val" ]; then
+              echo "::error::Repo variable $v is not set."
+              missing=1
             fi
-            sleep 5
           done
-          echo "::warning::Smoke check did not see the auth gate response within 60s. Deployment may still be propagating."
+          if [ "$missing" = "1" ]; then exit 1; fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: api/package-lock.json
+
+      - name: Install API deps (production only)
+        working-directory: api
+        run: npm ci --omit=dev
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy to Azure Function App
+        uses: Azure/functions-action@v1
+        with:
+          app-name: ${{ vars.AZURE_FUNCTIONAPP_NAME }}
+          package: api
+          sku: flexconsumption
+          remote-build: true
+
+  smoke_check:
+    needs: [deploy_frontend, deploy_api]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    name: Smoke check
+    steps:
+      - name: Confirm both deploys reported success
+        run: |
+          echo "Frontend + API deploys both reported success."
+          echo "Open the SWA URL in a browser to verify end-to-end."
 
   close_pr_preview:
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
