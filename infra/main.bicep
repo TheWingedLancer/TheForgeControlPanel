@@ -27,6 +27,13 @@ param uniqueSuffix string = uniqueString(resourceGroup().id)
 @description('Entra ID (Azure AD) tenant ID that users must belong to (enforced server-side by the Function)')
 param aadTenantId string
 
+@description('Client ID of the Entra app registration used by SWA for sign-in')
+param aadClientId string
+
+@description('Client secret of the Entra app registration (provided at deploy time, stored in Key Vault for rotation tracking and set as a SWA app setting)')
+@secure()
+param aadClientSecret string
+
 @description('The Forge API key with manage-games permission (provided at deploy time, stored in Key Vault)')
 @secure()
 param forgeApiKey string
@@ -100,6 +107,18 @@ resource secretAllowedEmails 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   properties: {
     value: allowedEmailsJson
     contentType: 'application/json'
+  }
+}
+
+// AAD client secret in Key Vault. SWA app settings don't support Key Vault
+// references, so the secret is also written to the SWA below. This Key Vault
+// copy exists for rotation tracking and as the canonical source of truth.
+resource secretAadClientSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: 'aad-client-secret'
+  properties: {
+    value: aadClientSecret
+    contentType: 'text/plain'
   }
 }
 
@@ -290,10 +309,20 @@ resource swa 'Microsoft.Web/staticSites@2023-12-01' = {
   }
 }
 
-// SWA auth uses the Microsoft-managed app registration (no client ID/secret
-// needed), so the SWA has no auth-related app settings. The tenant ID is
-// baked into staticwebapp.config.json at build time via the frontend's
-// render-swa-config.mjs script.
+// SWA app settings — these supply the AAD client ID and secret referenced
+// by staticwebapp.config.json's clientIdSettingName / clientSecretSettingName.
+// Note: SWA app settings do not support Key Vault references (documented
+// platform limitation), so the secret is set directly here. It's also stored
+// in Key Vault above for rotation tracking. aadClientSecret is @secure(),
+// so it won't appear in deployment outputs or logs.
+resource swaAppSettings 'Microsoft.Web/staticSites/config@2023-12-01' = {
+  parent: swa
+  name: 'appsettings'
+  properties: {
+    AZURE_CLIENT_ID: aadClientId
+    AZURE_CLIENT_SECRET: aadClientSecret
+  }
+}
 
 // Link the Function App as the SWA's backend. This makes /api/* on the SWA
 // proxy to the Function App, and injects x-ms-client-principal on each call.

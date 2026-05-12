@@ -4,8 +4,11 @@
   "auth": {
     "identityProviders": {
       "azureActiveDirectory": {
+        "userDetailsClaim": "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress",
         "registration": {
-          "openIdIssuer": "https://login.microsoftonline.com/AAD_TENANT_ID/v2.0"
+          "openIdIssuer": "https://login.microsoftonline.com/AAD_TENANT_ID/v2.0",
+          "clientIdSettingName": "AZURE_CLIENT_ID",
+          "clientSecretSettingName": "AZURE_CLIENT_SECRET"
         }
       }
     }
