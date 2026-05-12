@@ -81,6 +81,8 @@ export function getAuthorizedPrincipal(request) {
   }
   const tokenTenant = findClaim(principal, TID_CLAIM_TYPES);
   if (!tokenTenant || tokenTenant.toLowerCase() !== requiredTenant.toLowerCase()) {
+    // TEMPORARY DIAGNOSTIC — remove after debugging
+    console.log(`TENANT MISMATCH DEBUG: tokenTenant=${JSON.stringify(tokenTenant)} (len=${tokenTenant?.length}) requiredTenant=${JSON.stringify(requiredTenant)} (len=${requiredTenant.length})`);
     return { ok: false, status: 403, error: 'User is not from an allowed tenant' };
   }
 
