@@ -6,45 +6,24 @@
  *   1. The request came through the SWA frontend (not directly to the Function)
  *   2. The user has signed in via a configured identity provider
  *
- * We additionally enforce:
- *   - identityProvider === "aad" (Entra ID, not GitHub/Twitter/etc.)
- *   - The token's tenant claim (`tid`) matches REQUIRED_TENANT_ID
- *   - userDetails (email) is in the ALLOWED_EMAILS allowlist
+ * The header passed to LINKED-BACKEND Functions uses a slim format:
+ *   { identityProvider, userId, userDetails, userRoles }
+ * It does NOT include the full claims array that /.auth/me returns. So we
+ * cannot inspect the tenant claim (`tid`) from inside the Function.
  *
- * The tenant check matters because SWA's pre-configured AAD identity provider
- * accepts users from ANY Entra tenant by default. Without this, a malicious
- * actor could sign in with their own tenant and only the email allowlist
- * would protect us. Belt and suspenders.
+ * Tenant restriction is instead enforced at the AAD layer via the app
+ * registration's signInAudience=AzureADMyOrg — Microsoft only lets users from
+ * our tenant complete the sign-in flow in the first place. By the time the
+ * principal reaches us, AAD has already gatekept on tenant.
+ *
+ * We additionally enforce, in this file:
+ *   - identityProvider === "aad" (Entra ID, not GitHub/Twitter/etc.)
+ *   - userDetails (email) is in the ALLOWED_EMAILS allowlist
  *
  * Direct calls to the Function URL bypass SWA and will have no principal header,
  * so they are rejected. The Function is further locked down by Bicep to only
  * accept traffic from the SWA's linked backend.
  */
-
-const TID_CLAIM_TYPES = [
-  'http://schemas.microsoft.com/identity/claims/tenantid',
-  'tid',
-];
-
-const EMAIL_CLAIM_TYPES = [
-  'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress',
-  'emails',
-  'preferred_username',
-  'upn',
-];
-
-/**
- * Pull the first matching claim value from the SWA principal's claims array.
- */
-function findClaim(principal, types) {
-  if (!Array.isArray(principal.claims)) return null;
-  for (const t of types) {
-    const c = principal.claims.find((x) => x?.typ === t || x?.type === t);
-    if (c && c.val) return c.val;
-    if (c && c.value) return c.value;
-  }
-  return null;
-}
 
 /**
  * Parse and validate the client principal from request headers.
@@ -69,43 +48,7 @@ export function getAuthorizedPrincipal(request) {
     return { ok: false, status: 403, error: 'Unsupported identity provider' };
   }
 
-  // Tenant enforcement. With the pre-configured AAD provider, SWA allows any
-  // tenant unless we check ourselves.
-  const requiredTenant = (process.env.REQUIRED_TENANT_ID || '').trim();
-  if (!requiredTenant) {
-    return {
-      ok: false,
-      status: 500,
-      error: 'Server misconfiguration: REQUIRED_TENANT_ID not set',
-    };
-  }
-  const tokenTenant = findClaim(principal, TID_CLAIM_TYPES);
-  if (!tokenTenant || tokenTenant.toLowerCase() !== requiredTenant.toLowerCase()) {
-    // TEMPORARY DIAGNOSTIC — remove after debugging
-    return {
-      ok: false,
-      status: 403,
-      error: 'User is not from an allowed tenant',
-      debug: {
-        tokenTenant: tokenTenant,
-        tokenTenantLength: tokenTenant?.length,
-        requiredTenant: requiredTenant,
-        requiredTenantLength: requiredTenant.length,
-        claimsCount: Array.isArray(principal.claims) ? principal.claims.length : 'not-array',
-        firstFewClaimTypes: Array.isArray(principal.claims) ? principal.claims.slice(0, 5).map(c => c?.typ || c?.type) : null,
-      },
-    };
-  }
-
-  // Email allowlist. userDetails is populated from userDetailsClaim in the SWA
-  // config (which we point at the email claim), with claims as a fallback.
-  const email = (
-    principal.userDetails ||
-    findClaim(principal, EMAIL_CLAIM_TYPES) ||
-    ''
-  )
-    .toLowerCase()
-    .trim();
+  const email = (principal.userDetails || '').toLowerCase().trim();
   if (!email) {
     return { ok: false, status: 403, error: 'No user identifier on principal' };
   }
