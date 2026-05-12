@@ -8,21 +8,20 @@
  *
  * The header passed to LINKED-BACKEND Functions uses a slim format:
  *   { identityProvider, userId, userDetails, userRoles }
- * It does NOT include the full claims array that /.auth/me returns. So we
- * cannot inspect the tenant claim (`tid`) from inside the Function.
+ * It does NOT include the full claims array that /.auth/me returns.
  *
- * Tenant restriction is instead enforced at the AAD layer via the app
- * registration's signInAudience=AzureADMyOrg — Microsoft only lets users from
- * our tenant complete the sign-in flow in the first place. By the time the
- * principal reaches us, AAD has already gatekept on tenant.
+ * Access control is enforced at the AAD layer via the Enterprise Application
+ * configuration (appRoleAssignmentRequired=true). Only users explicitly
+ * assigned to the app in Entra ID → Enterprise applications → Users and
+ * groups can complete the sign-in flow. By the time the principal reaches
+ * this code, Entra has already gatekept who is allowed in.
  *
- * We additionally enforce, in this file:
- *   - identityProvider === "aad" (Entra ID, not GitHub/Twitter/etc.)
- *   - userDetails (email) is in the ALLOWED_EMAILS allowlist
+ * We additionally enforce here:
+ *   - identityProvider === "aad" (so non-AAD callers can't sneak in)
+ *   - userDetails is non-empty (so we can attribute actions to a real user)
  *
- * Direct calls to the Function URL bypass SWA and will have no principal header,
- * so they are rejected. The Function is further locked down by Bicep to only
- * accept traffic from the SWA's linked backend.
+ * Direct calls to the Function URL bypass SWA and will have no principal
+ * header, so they are rejected.
  */
 
 /**
@@ -51,18 +50,6 @@ export function getAuthorizedPrincipal(request) {
   const email = (principal.userDetails || '').toLowerCase().trim();
   if (!email) {
     return { ok: false, status: 403, error: 'No user identifier on principal' };
-  }
-
-  const allowlistRaw = process.env.ALLOWED_EMAILS || '[]';
-  let allowlist;
-  try {
-    allowlist = JSON.parse(allowlistRaw).map((e) => String(e).toLowerCase().trim());
-  } catch {
-    return { ok: false, status: 500, error: 'Server misconfiguration: ALLOWED_EMAILS not valid JSON' };
-  }
-
-  if (!allowlist.includes(email)) {
-    return { ok: false, status: 403, error: 'User not on allowlist' };
   }
 
   return { ok: true, principal: { ...principal, userDetails: email } };
