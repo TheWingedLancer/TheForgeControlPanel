@@ -1,0 +1,317 @@
+:root {
+  --bg-deep: #0e0c0a;
+  --bg-panel: #1a1614;
+  --bg-elevated: #25201c;
+  --ink: #d9cfb8;
+  --ink-dim: #8c8275;
+  --ink-faint: #5a534a;
+  --rule: #3a322a;
+  --accent: #c89b3c;        /* tarnished gold */
+  --accent-bright: #e6b84a;
+  --good: #6b8e4e;          /* moss green */
+  --bad: #a04438;           /* dried blood */
+  --warn: #c79a3a;
+  --font-display: 'IM Fell English SC', Georgia, serif;
+  --font-body: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg-deep);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 14px;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Parchment-grain background overlay */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(circle at 20% 30%, rgba(200, 155, 60, 0.04) 0%, transparent 50%),
+    radial-gradient(circle at 80% 70%, rgba(160, 68, 56, 0.03) 0%, transparent 50%);
+  z-index: 0;
+}
+
+#root {
+  position: relative;
+  z-index: 1;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ============ Layout ============ */
+
+.app {
+  max-width: 880px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 3rem 1.5rem 4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+header.masthead {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 1.5rem;
+}
+
+.masthead h1 {
+  font-family: var(--font-display);
+  font-size: 2.5rem;
+  font-weight: normal;
+  letter-spacing: 0.05em;
+  margin: 0;
+  color: var(--accent);
+  text-shadow: 0 0 30px rgba(200, 155, 60, 0.15);
+}
+
+.masthead .sub {
+  color: var(--ink-dim);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+}
+
+.masthead .who {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 0.75rem;
+  font-size: 0.8rem;
+  color: var(--ink-faint);
+}
+
+.masthead .who a {
+  color: var(--ink-dim);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--ink-faint);
+}
+
+.masthead .who a:hover {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* ============ Game selector ============ */
+
+.selector {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.selector label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--ink-dim);
+}
+
+.selector select {
+  background: var(--bg-panel);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  padding: 0.85rem 1rem;
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  width: 100%;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path d='M1 1l5 5 5-5' stroke='%23c89b3c' stroke-width='1.5' fill='none' stroke-linecap='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 1rem center;
+  padding-right: 2.5rem;
+  transition: border-color 0.15s;
+}
+
+.selector select:hover, .selector select:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+/* ============ Action buttons ============ */
+
+.actions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+}
+
+@media (max-width: 600px) {
+  .actions {
+    grid-template-columns: 1fr;
+  }
+}
+
+.action {
+  background: var(--bg-panel);
+  border: 1px solid var(--rule);
+  color: var(--ink);
+  padding: 1.25rem 1rem;
+  font-family: var(--font-display);
+  font-size: 1.3rem;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  position: relative;
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.action .verb {
+  font-size: 1.3rem;
+}
+
+.action .hint {
+  font-family: var(--font-body);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: var(--ink-faint);
+  font-weight: normal;
+}
+
+.action:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--bg-elevated);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 20px rgba(200, 155, 60, 0.12);
+}
+
+.action:hover:not(:disabled) .hint {
+  color: var(--ink-dim);
+}
+
+.action:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.action:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.action.start { color: var(--good); }
+.action.start:hover:not(:disabled) { border-color: var(--good); box-shadow: 0 4px 20px rgba(107, 142, 78, 0.15); }
+
+.action.idle { color: var(--warn); }
+.action.idle:hover:not(:disabled) { border-color: var(--warn); box-shadow: 0 4px 20px rgba(199, 154, 58, 0.15); }
+
+.action.stop { color: var(--bad); }
+.action.stop:hover:not(:disabled) { border-color: var(--bad); box-shadow: 0 4px 20px rgba(160, 68, 56, 0.15); }
+
+.action .spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  display: inline-block;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ============ Activity log ============ */
+
+.log {
+  background: var(--bg-panel);
+  border: 1px solid var(--rule);
+  padding: 1rem 1.25rem;
+  min-height: 200px;
+  font-size: 0.8rem;
+  line-height: 1.6;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.log-header {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--ink-dim);
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: 0.5rem;
+  display: flex;
+  justify-content: space-between;
+}
+
+.log-entry {
+  display: flex;
+  gap: 1rem;
+  align-items: baseline;
+}
+
+.log-entry .time {
+  color: var(--ink-faint);
+  font-size: 0.7rem;
+  flex-shrink: 0;
+  min-width: 70px;
+}
+
+.log-entry.ok .msg { color: var(--good); }
+.log-entry.err .msg { color: var(--bad); }
+.log-entry.info .msg { color: var(--ink); }
+
+.log-empty {
+  color: var(--ink-faint);
+  font-style: italic;
+}
+
+/* ============ Loading / error states ============ */
+
+.boot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  flex-direction: column;
+  gap: 1rem;
+  color: var(--ink-dim);
+  font-size: 0.9rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+.boot .spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--accent);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.error-box {
+  background: var(--bg-panel);
+  border: 1px solid var(--bad);
+  padding: 1.5rem;
+  color: var(--ink);
+}
+
+.error-box h2 {
+  font-family: var(--font-display);
+  margin: 0 0 0.5rem;
+  color: var(--bad);
+}

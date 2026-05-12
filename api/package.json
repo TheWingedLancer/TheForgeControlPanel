@@ -1,0 +1,17 @@
+{
+  "name": "theforgecontrol-api",
+  "version": "0.1.0",
+  "description": "Azure Functions API for controlling FoundryVTT games on The Forge",
+  "main": "src/functions/*.js",
+  "type": "module",
+  "scripts": {
+    "start": "func start",
+    "test": "echo \"No tests yet\" && exit 0"
+  },
+  "dependencies": {
+    "@azure/functions": "^4.5.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

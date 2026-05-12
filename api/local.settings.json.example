@@ -1,0 +1,10 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "",
+    "FUNCTIONS_WORKER_RUNTIME": "node",
+    "FORGE_API_KEY": "REPLACE_WITH_YOUR_KEY_FOR_LOCAL_DEV_ONLY",
+    "FORGE_GAME_SLUGS": "[\"game-slug-1\", \"game-slug-2\"]",
+    "ALLOWED_EMAILS": "[\"you@example.com\"]"
+  }
+}

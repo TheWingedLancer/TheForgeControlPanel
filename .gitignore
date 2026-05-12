@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+frontend/dist/
+api/dist/
+
+# Local Functions runtime
+api/local.settings.json
+api/.azure/
+
+# Bicep parameter file with real values
+infra/main.bicepparam
+infra/*.bicepparam
+!infra/main.bicepparam.example
+
+# Environment
+.env
+.env.local
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# Azure CLI / Bicep
+*.deploymentScript.log
