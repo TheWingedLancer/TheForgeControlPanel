@@ -67,6 +67,17 @@ export default function App() {
   const onAction = async (action) => {
     setBusyAction(action);
     const label = games.find((g) => g.slug === selected)?.label || selected;
+
+    // For Start: open the game URL in a new tab immediately, synchronously
+    // with the click. Doing this here (before any await) avoids browsers'
+    // popup blockers, which only allow window.open from direct user gestures.
+    // The Foundry instance shows its own "starting..." page while the
+    // Forge boots up, so the user gets visible feedback right away.
+    if (action === 'start' && selected) {
+      const gameUrl = `https://${selected}.forge-vtt.com/game`;
+      window.open(gameUrl, '_blank', 'noopener,noreferrer');
+    }
+
     try {
       const body = await fetchJson(`/api/control/${action}`, {
         method: 'POST',
