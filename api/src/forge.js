@@ -19,10 +19,14 @@ const FORGE_BASE = 'https://forge-vtt.com/api';
  * @returns {Promise<{ httpStatus: number, body: object }>}
  */
 export async function controlGame(action, opts = {}) {
-  const apiKey = process.env.FORGE_API_KEY;
-  if (!apiKey) {
+  const rawKey = process.env.FORGE_API_KEY;
+  if (!rawKey) {
     throw new Error('FORGE_API_KEY not configured');
   }
+
+  // Defensive: trim any leading/trailing whitespace or CR/LF that might have
+  // come along via Key Vault, env-var transport, or file-based provisioning.
+  const apiKey = rawKey.trim();
 
   if (!['start', 'stop', 'idle'].includes(action)) {
     throw new Error(`Invalid action: ${action}`);
@@ -55,6 +59,18 @@ export async function controlGame(action, opts = {}) {
     parsed = text ? JSON.parse(text) : {};
   } catch {
     parsed = { raw: text };
+  }
+
+  // Diagnostic: include key fingerprint in the body for non-200 responses,
+  // so we can compare what the Function is sending vs what works locally.
+  if (response.status >= 400) {
+    parsed.__diag = {
+      rawKeyLength: rawKey.length,
+      trimmedKeyLength: apiKey.length,
+      firstChars: apiKey.slice(0, 6),
+      lastChars: apiKey.slice(-6),
+      hasNonAscii: /[^\x20-\x7E]/.test(apiKey),
+    };
   }
 
   return { httpStatus: response.status, body: parsed };
