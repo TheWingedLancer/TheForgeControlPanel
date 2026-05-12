@@ -105,13 +105,22 @@ jobs:
           SUB_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
         run: |
           missing=0
-          for v in FUNC_NAME CLIENT_ID TENANT_ID SUB_ID; do
-            eval "val=\$$v"
-            if [ -z "$val" ]; then
-              echo "::error::Repo variable $v is not set."
-              missing=1
-            fi
-          done
+          if [ -z "$FUNC_NAME" ]; then
+            echo "::error::Repo variable AZURE_FUNCTIONAPP_NAME is not set."
+            missing=1
+          fi
+          if [ -z "$CLIENT_ID" ]; then
+            echo "::error::Repo variable AZURE_CLIENT_ID is not set."
+            missing=1
+          fi
+          if [ -z "$TENANT_ID" ]; then
+            echo "::error::Repo variable AZURE_TENANT_ID is not set."
+            missing=1
+          fi
+          if [ -z "$SUB_ID" ]; then
+            echo "::error::Repo variable AZURE_SUBSCRIPTION_ID is not set."
+            missing=1
+          fi
           if [ "$missing" = "1" ]; then exit 1; fi
 
       - name: Setup Node
