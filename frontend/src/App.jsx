@@ -76,8 +76,16 @@ export default function App() {
 
       // Forge response shape: { success: true/false } on success-but-refused (e.g. idle declined),
       // or { error, code } on actual errors. The API surfaces both transparently.
+      // The API may also return { pending: true } if the Forge call is taking
+      // longer than the SWA edge timeout — the action is still completing in
+      // the background, just not awaited.
       if (body.error) {
         appendLog({ kind: 'err', msg: `${action.toUpperCase()} ${label} → ${body.error}` });
+      } else if (body.pending) {
+        appendLog({
+          kind: 'info',
+          msg: `${action.toUpperCase()} ${label} → still working… try the game URL in ~30s`,
+        });
       } else if (body.success === false) {
         appendLog({
           kind: 'err',
