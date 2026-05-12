@@ -24,9 +24,6 @@ param location string = resourceGroup().location
 @description('Random suffix to ensure global uniqueness of certain resources')
 param uniqueSuffix string = uniqueString(resourceGroup().id)
 
-@description('Entra ID (Azure AD) tenant ID that users must belong to (enforced server-side by the Function)')
-param aadTenantId string
-
 @description('Client ID of the Entra app registration used by SWA for sign-in')
 param aadClientId string
 
@@ -40,9 +37,6 @@ param forgeApiKey string
 
 @description('JSON array of Forge game slugs the user wants to control, e.g. ["game-one","game-two"]')
 param forgeGameSlugsJson string = '[]'
-
-@description('JSON array of allowed email addresses, e.g. ["you@example.com","guest@example.com"]')
-param allowedEmailsJson string
 
 @description('Object ID of the principal that should have admin access to Key Vault (typically your user object id)')
 param keyVaultAdminPrincipalId string
@@ -97,15 +91,6 @@ resource secretForgeSlugs 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   name: 'forge-game-slugs'
   properties: {
     value: forgeGameSlugsJson
-    contentType: 'application/json'
-  }
-}
-
-resource secretAllowedEmails 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  parent: keyVault
-  name: 'allowed-emails'
-  properties: {
-    value: allowedEmailsJson
     contentType: 'application/json'
   }
 }
@@ -244,17 +229,6 @@ resource func 'Microsoft.Web/sites@2024-11-01' = {
         {
           name: 'FORGE_GAME_SLUGS'
           value: '@Microsoft.KeyVault(VaultName=${keyVault.name};SecretName=forge-game-slugs)'
-        }
-        {
-          name: 'ALLOWED_EMAILS'
-          value: '@Microsoft.KeyVault(VaultName=${keyVault.name};SecretName=allowed-emails)'
-        }
-        // Plain (non-secret) setting: the tenant ID the Function will accept.
-        // Used by the auth helper to reject sign-ins from foreign tenants,
-        // since SWA's pre-configured AAD provider is otherwise tenant-agnostic.
-        {
-          name: 'REQUIRED_TENANT_ID'
-          value: aadTenantId
         }
       ]
     }

@@ -2,13 +2,13 @@
 
 A private Azure Static Web App for starting, stopping, and idling FoundryVTT
 games hosted on [The Forge](https://forge-vtt.com), gated behind Entra ID
-authentication.
+authentication with per-user access control.
 
 ## Architecture
 
 ```
                     ┌─────────────────────────────────────┐
-                    │  Browser (you + guests)              │
+                    │  Browser (you + assigned guests)     │
                     │  https://<your-swa>.azurestaticapps  │
                     └────────────────┬─────────────────────┘
                                      │  signs in via AAD
@@ -22,8 +22,8 @@ authentication.
                                      │  /api/* proxied to
                                      ▼
                     ┌─────────────────────────────────────┐
-                    │  Azure Function App                  │
-                    │  ─ Validates principal + allowlist   │
+                    │  Azure Function App (Flex)           │
+                    │  ─ Validates SWA principal           │
                     │  ─ Reads FORGE_API_KEY at runtime    │
                     │  ─ Calls forge-vtt.com/api/game/*    │
                     └────────────────┬─────────────────────┘
@@ -33,7 +33,7 @@ authentication.
                     │  Azure Key Vault                     │
                     │  ─ forge-api-key                     │
                     │  ─ forge-game-slugs                  │
-                    │  ─ allowed-emails                    │
+                    │  ─ aad-client-secret                 │
                     └─────────────────────────────────────┘
 ```
 
@@ -49,146 +49,199 @@ The Function App configures `FORGE_API_KEY` as a Key Vault reference
 (`@Microsoft.KeyVault(VaultName=...;SecretName=forge-api-key)`), which Azure
 resolves at process start. The key only exists in Function memory.
 
+### Access control
+
+Two layers, both managed in Entra ID:
+
+1. **Tenant restriction** via the app registration's `signInAudience =
+   AzureADMyOrg`. Only accounts in your Entra tenant (including invited
+   guests) can complete sign-in.
+2. **Per-user assignment** via the Enterprise Application's `Users and
+   groups` blade. Even within your tenant, only users explicitly assigned
+   to the app can sign in. Manage this from the Azure portal — no code
+   changes needed to add/remove users.
+
+### Slug allowlist
+
+Even an authorized user can only target games whose slugs are in the
+`forge-game-slugs` Key Vault secret. This prevents pranks like calling
+`/api/control/stop` against an arbitrary game.
+
+### Slow-start handling
+
+Forge `start` calls can exceed 30 seconds (a Foundry instance has to boot).
+Azure Static Web Apps enforces a ~30s timeout on linked-backend calls. The
+Function races the Forge response against a 25-second timer; if Forge is
+still working, the Function returns HTTP 202 with `{ pending: true }` and
+the Forge call continues in the background. The frontend shows a "still
+working" message; refreshing the game URL after ~30 more seconds confirms
+the boot completed.
+
 ---
 
 ## One-time setup
 
-You only do this once per environment. After this, `git push` deploys
-updates automatically.
-
 ### 0. Prerequisites
 
 - Azure CLI installed (`az --version`)
-- Logged in: `az login`
-- An Azure subscription named **TheForgeControlPanel** (create via Azure portal →
-  Subscriptions → Add, under your existing billing account)
-- Your Forge API key with `manage-games` permission (see Forge docs;
-  generate via the dev-console method described in the
+- GitHub CLI installed (`gh --version`) and authenticated (`gh auth login`)
+- Azure CLI logged in (`az login`)
+- A dedicated Azure subscription (e.g. `TheForgeControl`)
+- A Forge API key with `manage-games` permission (generated via the dev
+  console method in the
   [Forge API guide](https://forums.forge-vtt.com/t/5982))
 
-### 1. (No app registration needed)
-
-This project uses SWA's **pre-configured Microsoft identity provider**, which
-relies on a Microsoft-managed app registration scoped to your Static Web App.
-You don't register or maintain anything in Entra — no client ID, no client
-secret, no expiry to track. Tenant restriction (so only users from your tenant
-can sign in) is enforced server-side by the Function instead, via the
-`REQUIRED_TENANT_ID` setting.
-
-### 2. Gather a few values
+### 1. Capture identity info
 
 ```powershell
-az account set --subscription "TheForgeControlPanel"
-
-# Your tenant ID (you'll need this for the parameter file and GitHub repo variable)
-az account show --query tenantId -o tsv
-
-# Your object ID (used for Key Vault admin access)
-az ad signed-in-user show --query id -o tsv
+az account set --subscription "TheForgeControl"
+az account show --query tenantId -o tsv          # save as AAD tenant ID
+az ad signed-in-user show --query id -o tsv      # save as your object ID
 ```
+
+### 2. Create the Entra app registration
+
+Your tenant's default app management policy likely blocks password
+credentials, so create a custom exemption policy and assign it to just
+this one app, then generate a client secret. After creating the app, also:
+
+- Set the redirect URI: `https://<your-swa-hostname>/.auth/login/aad/callback`
+- Enable ID token issuance:
+  `web.implicitGrantSettings.enableIdTokenIssuance = true`
+- Set `appRoleAssignmentRequired = true` on the Enterprise Application
+- Assign yourself to the Enterprise Application
+
+(See conversation history / earlier commits for the exact CLI flow if
+re-bootstrapping from scratch.)
 
 ### 3. Fill in deployment parameters
 
 ```bash
 cp infra/main.bicepparam.example infra/main.bicepparam
-# Edit infra/main.bicepparam:
-#   aadTenantId            = your Entra tenant ID from step 2
-#   forgeApiKey            = your Forge API key
-#   forgeGameSlugsJson     = ["slug-one","slug-two"]
-#   allowedEmailsJson      = ["you@example.com","guest@example.com"]
-#   keyVaultAdminPrincipalId = your object ID from step 2
 ```
 
-> `main.bicepparam` is in `.gitignore`. It contains the Forge key — never
-> commit it. Bicep marks `forgeApiKey` as `@secure()`, so it won't appear in
-> deployment outputs or logs either.
+Edit `infra/main.bicepparam` with the values from steps 1-2. The file is
+in `.gitignore` and won't be committed.
 
-### 4. Deploy infrastructure
+### 4. Deploy Azure infrastructure
 
 ```powershell
 .\scripts\deploy-infra.ps1 -ResourceGroup RG_TheForgeControlPanel -Location eastus2
 ```
 
-This creates all Azure resources and configures them. Takes ~3–5 minutes.
-Note the `staticWebAppHostname` and `staticWebAppName` outputs.
+Capture the `staticWebAppName` and `staticWebAppHostname` outputs.
 
-### 5. (No redirect URI to configure — Microsoft-managed app handles this)
+### 5. Configure SWA app settings
 
-### 6. Bootstrap GitHub repo and push
+SWA app settings can't use Key Vault references, so the AAD client ID and
+secret are set directly:
 
-The `bootstrap-github.ps1` script creates the GitHub repo, reads the SWA
-deployment token from Azure, configures the repo secret and variable, and
-pushes your initial commit:
+```powershell
+az staticwebapp appsettings set `
+    --name <staticWebAppName from step 4> `
+    --resource-group RG_TheForgeControlPanel `
+    --setting-names `
+      AZURE_CLIENT_ID=<client ID from step 2> `
+      AZURE_CLIENT_SECRET=<client secret from step 2>
+```
+
+### 6. Bootstrap GitHub repo and trigger first deploy
 
 ```powershell
 .\scripts\bootstrap-github.ps1 `
-    -GitHubOwner TheWingedLancer `
+    -GitHubOwner <your-github-username> `
     -RepoName TheForgeControlPanel `
     -ResourceGroup RG_TheForgeControlPanel `
-    -StaticWebAppName <swa-name-from-bicep-output> `
-    -AadTenantId ec43f631-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    -StaticWebAppName <staticWebAppName from step 4> `
+    -AadTenantId <tenantId from step 1>
 ```
 
-It's idempotent — safe to re-run if anything goes wrong partway. After it
-pushes, GitHub Actions runs the deploy workflow. Watch it with:
+This creates the GitHub repo (if missing), configures the SWA deployment
+token and tenant ID variable, commits, and pushes.
 
-```powershell
-gh run watch --repo TheWingedLancer/TheForgeControlPanel
-```
+### 7. Configure OIDC for Function deploys
 
-Within ~2 minutes, the site is live at `https://<your-swa-hostname>`.
+GitHub Actions deploys the API to the Function App via OIDC federated
+credentials (no long-lived secret). One-time setup creates a user-assigned
+managed identity, grants it `Website Contributor` on the Function App, and
+trusts your GitHub repo's `main` branch.
 
-### 7. Day 2 — ongoing changes
+Add these as GitHub repository **variables** (not secrets — they're not
+sensitive):
 
-After the bootstrap, every push to `main` triggers an automatic deploy:
-
-```bash
-git add .
-git commit -m "..."
-git push
-```
-
-Pull requests get preview deployments (and are torn down when closed).
-`workflow_dispatch` lets you trigger manual deploys from the Actions tab.
+- `AZURE_CLIENT_ID` — managed identity client ID
+- `AZURE_TENANT_ID` — your Entra tenant ID
+- `AZURE_SUBSCRIPTION_ID` — your subscription ID
+- `AZURE_FUNCTIONAPP_NAME` — the Function App name (e.g. `func-tfcp-...`)
 
 ---
 
 ## Day-to-day operations
 
-### Add or remove allowed users
+### Add or remove user access
 
-The `allowed-emails` Key Vault secret is a JSON array. Update it via portal
-or CLI; the Function reads it at runtime, no redeploy needed.
+In the Azure portal: **Microsoft Entra ID → Enterprise applications →
+TheForge-Control-Panel → Users and groups**.
 
-```powershell
-$emails = '["you@example.com","newguest@example.com"]'
-az keyvault secret set `
-    --vault-name <kv-name> `
-    --name allowed-emails `
-    --value $emails
-```
+- To add an existing tenant user: click `Add user/group`, search, assign.
+- To add an external guest: click `Add user/group` → `Users` → `Invite an
+  external user`. They get an invitation email; once they accept, assign
+  them to the app.
+- To remove access: find the user in the list, click `Remove`.
 
-> The Function caches Key Vault references for ~24 hours by default. To
-> force an immediate refresh, restart the Function App:
-> `az functionapp restart -n <func-name> -g RG_TheForgeControlPanel`
+No code changes, no redeploys.
 
 ### Change the game slugs
 
-Same pattern with the `forge-game-slugs` secret.
+The `forge-game-slugs` Key Vault secret is a JSON array. Update it via
+portal or CLI:
+
+```powershell
+$slugs = '["age-of-crusades","new-game-slug"]'
+az keyvault secret set --vault-name <kv-name> --name forge-game-slugs --value $slugs
+```
+
+Restart the Function App to refresh the Key Vault reference cache:
+
+```powershell
+az rest --method POST `
+    --uri "https://management.azure.com/subscriptions/<sub-id>/resourceGroups/RG_TheForgeControlPanel/providers/Microsoft.Web/sites/<func-name>/restart?api-version=2023-12-01"
+```
 
 ### Rotate the Forge API key
 
 1. Generate a new key on the Forge (see Forge docs)
 2. Update the `forge-api-key` secret in Key Vault
-3. Restart the Function App
-4. Optionally revoke the old key on the Forge
+3. Delete and re-add the `FORGE_API_KEY` Function app setting (forces the
+   Key Vault reference to re-resolve, working around a Flex Consumption
+   caching quirk)
+4. Restart the Function App via the management API
+5. Optionally revoke the old key on the Forge
 
-### Local development
+### Rotate the AAD client secret
+
+The client secret expires in 2 years (or whatever you configured). When
+it's time:
+
+1. Generate a new secret:
+   ```powershell
+   az ad app credential reset --id <client-id> --years 2
+   ```
+2. Update the SWA app setting:
+   ```powershell
+   az staticwebapp appsettings set --name <swa-name> --resource-group RG_TheForgeControlPanel --setting-names AZURE_CLIENT_SECRET=<new secret>
+   ```
+3. Update the `aad-client-secret` Key Vault secret (for tracking)
+4. No restart needed; SWA picks up app setting changes automatically
+
+---
+
+## Local development
 
 ```bash
 # Terminal 1: API
 cd api
-cp local.settings.json.example local.settings.json   # fill in your dev key
+cp local.settings.json.example local.settings.json   # fill in dev key
 npm install
 npm start    # requires Azure Functions Core Tools
 
@@ -199,28 +252,10 @@ npm run build
 swa start dist --api-location ../api    # requires SWA CLI
 ```
 
-The SWA CLI gives you a working `/.auth/me` mock so you can test auth flows
-locally.
+The SWA CLI provides a mocked `/.auth/me` so you can test auth flows
+locally without going through real AAD.
 
 ---
-
-## Security notes
-
-- **No Forge key in browser.** Verified: only the Function App can read it.
-- **No Forge key in source.** Verified: it lives only in Key Vault.
-- **No Forge key in GitHub Actions.** Verified: the workflow only knows the
-  SWA deployment token, which controls *deploying code*, not reading
-  secrets.
-- **Tenant-locked auth.** The app registration uses `AzureADMyOrg` audience,
-  so only accounts in your tenant can even reach the sign-in page.
-- **Email allowlist on top of tenant auth.** Even within your tenant, only
-  emails in `allowed-emails` can call the API.
-- **Slug allowlist.** Even an allowed user can only target games whose slugs
-  are in `forge-game-slugs` — they can't pass an arbitrary slug.
-- **Function locked to SWA.** The linked-backend wiring means the Function
-  expects to be called through the SWA, which is what injects the
-  authenticated principal. Direct Function URL calls have no principal and
-  are rejected.
 
 ## Repo layout
 
@@ -231,15 +266,16 @@ TheForgeControlPanel/
 │   │   ├── App.jsx        # Control panel component
 │   │   ├── main.jsx
 │   │   └── styles.css     # WFRP-flavored dark theme
-│   ├── public/
-│   │   └── staticwebapp.config.json  # SWA auth + route gates
+│   ├── scripts/
+│   │   └── render-swa-config.mjs  # Renders SWA config from template at build time
 │   ├── index.html
 │   ├── package.json
+│   ├── staticwebapp.config.template.json  # Source for SWA auth + route gates
 │   └── vite.config.js
-├── api/                   # Azure Functions (Node 20, v4 model)
+├── api/                   # Azure Functions (Node 20, v4 model, Flex Consumption)
 │   ├── src/
-│   │   ├── auth.js        # Principal validation + allowlist
-│   │   ├── forge.js       # The Forge API client
+│   │   ├── auth.js        # Principal validation
+│   │   ├── forge.js       # Forge API client + slow-start handling
 │   │   └── functions/
 │   │       ├── games.js   # GET /api/games
 │   │       ├── control.js # POST /api/control/{action}
@@ -251,9 +287,10 @@ TheForgeControlPanel/
 │   ├── main.bicep                 # Full Azure resource graph
 │   └── main.bicepparam.example    # Copy to main.bicepparam (gitignored)
 ├── scripts/
-│   └── deploy-infra.ps1
+│   ├── deploy-infra.ps1           # One-shot infra provisioning
+│   └── bootstrap-github.ps1       # GitHub repo + secrets setup
 ├── .github/workflows/
-│   └── deploy.yml         # GitHub Actions deployment
+│   └── deploy.yml         # Build, deploy frontend (SWA), deploy API (OIDC)
 ├── .gitignore
 └── README.md
 ```
