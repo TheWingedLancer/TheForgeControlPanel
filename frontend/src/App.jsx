@@ -158,8 +158,8 @@ export default function App() {
   return (
     <div className="app">
       <header className="masthead">
-        <div className="sub">Brown Dog Enterprises · TheForgeControlPanel</div>
-        <h1>The Old World</h1>
+        <div className="sub">Brown Dog Enterprises</div>
+        <h1>The Forge Control Panel</h1>
         <div className="who">
           <span>Signed in as {me?.email}</span>
           <a href="/.auth/logout">Sign out</a>
